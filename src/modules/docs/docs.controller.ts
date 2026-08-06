@@ -1,5 +1,6 @@
 import { Controller, Get, Header } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
+import { SkipEnvelope } from '../../common/decorators/skip-envelope.decorator';
 import { asyncApiSpec } from './asyncapi-spec';
 
 /**
@@ -8,6 +9,7 @@ import { asyncApiSpec } from './asyncapi-spec';
  *   GET /api/events-docs/spec → raw JSON spec
  */
 @ApiExcludeController()
+@SkipEnvelope()
 @Controller('api/events-docs')
 export class DocsController {
   @Get('spec')
