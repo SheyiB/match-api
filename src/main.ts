@@ -34,7 +34,7 @@ async function bootstrap() {
   SwaggerModule.setup('/api/docs', app, SwaggerModule.createDocument(app, config));
 
   // Redirect the root URL to Swagger docs so visitors land somewhere useful.
-  app.getHttpAdapter().get('/', (_req, res) => res.redirect('/api/docs'));
+  app.getHttpAdapter().get('/', (_req, res: any) => res.redirect('/api/docs'));
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
