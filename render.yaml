@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: profootball-match-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: TICK_INTERVAL_MS
+        value: "1000"
+      - key: MATCH_MINUTE_RATIO
+        value: "1"
+      - key: CONCURRENT_MATCHES
+        value: "4"
+      - key: CHAT_MAX_MESSAGE_LENGTH
+        value: "500"
+      - key: CHAT_RATE_LIMIT_MAX
+        value: "5"
+      - key: CHAT_RATE_LIMIT_WINDOW_SEC
+        value: "10"
