@@ -1,5 +1,8 @@
 # ProFootball Real-Time Match API
 
+**Live API:** https://match-api-0oaf.onrender.com — interactive Swagger docs
+at [`/api/docs`](https://match-api-0oaf.onrender.com/api/docs).
+
 Backend implementation for the ProFootball take-home assessment: REST match
 data, Socket.io room-based live updates, SSE match event streams,
 Prisma/Supabase Postgres persistence, Redis hot state/pub-sub, chat presence,
@@ -31,7 +34,6 @@ npm run prisma:seed
 npm run start:dev
 ```
 
-The API listens on `PORT`, defaulting to `3000`.
 
 ## Deployment
 
@@ -73,8 +75,10 @@ npm run prisma:seed
 ```
 
 Render free instances can spin down when idle, which can affect automated
-testing and live connections. For assessment submission, an always-on paid
-instance is safer.
+testing and live connections — the live URL above is currently running on
+Render's **free** tier, so the first request after a period of inactivity can
+take up to a minute to respond. `render.yaml` sets `plan: starter` for anyone
+who wants to deploy their own always-on instance instead.
 
 ## REST
 
@@ -192,11 +196,112 @@ Redis stores only ephemeral state:
 Socket subscriptions are not persisted. Socket.io room membership is the source
 of truth for live subscriptions.
 
+## Action Flows
+
+The event list above shows what gets emitted; this shows what actually
+happens end-to-end for each action. Every WebSocket action follows the same
+shape: validate the payload, apply the change, then (sometimes) broadcast.
+
+**Subscribe to a match** — `match:subscribe`
+
+```text
+client emits match:subscribe {matchId}
+  -> validate payload is a UUID
+  -> MatchesService.exists(matchId), else WsException MATCH_NOT_FOUND
+  -> client.join(`match:{id}`)
+  -> first subscriber for this match? subscribe the gateway's Redis client to
+     `match:{id}:events` (ref-counted, so N clients on one match share a
+     single Redis subscription)
+  -> ack { ok: true }
+```
+
+`match:unsubscribe` mirrors this: `client.leave`, then unsubscribe the Redis
+channel once the ref count reaches zero.
+
+**Join a chat room** — `chat:join`
+
+```text
+client emits chat:join {matchId, userId, username}
+  -> ChatService.join: HINCRBY chat:{id}:presence[userId]  (per-tab counter)
+  -> client.join(`chat:{id}`)
+  -> counter went 0 -> 1 (first open tab for this user)?
+       broadcast chat:user_joined with the new userCount
+     counter already > 0 (another tab)?
+       join silently, no broadcast
+  -> ack { ok: true }
+```
+
+That per-user counter is the duplicate-tab handling the brief asks for: a
+second tab from the same user increments the count without re-announcing
+them. `chat:leave` mirrors this in reverse, only broadcasting
+`chat:user_left` once the counter hits zero (their last tab closed).
+
+**Send a chat message** — `chat:message`
+
+```text
+client emits chat:message {matchId, text}
+  -> gateway requires an active chat:join for this matchId first,
+     else WsException NOT_SUBSCRIBED
+  -> ChatService.message: trim, reject empty/over-length
+  -> INCR chat:{id}:ratelimit:{userId}  (fixed window, EXPIRE set on first hit)
+  -> over CHAT_RATE_LIMIT_MAX? WsException RATE_LIMITED
+  -> persist ChatMessage row in Postgres
+  -> broadcast chat:message to the chat:{id} room
+```
+
+**Typing indicators** — `chat:typing:start` / `chat:typing:stop`
+
+```text
+start -> SET chat:{id}:typing:{userId} EX 4  -> relay { isTyping: true }
+stop  -> DEL chat:{id}:typing:{userId}       -> relay { isTyping: false }
+```
+
+If a client disconnects mid-type without sending `stop`, the 4-second Redis
+TTL is what clears the indicator client-side (see Known Limitations).
+
+**Match events — driven by the simulator, not a client**
+
+```text
+SimulatorService.tick() (every TICK_INTERVAL_MS)
+  -> advance each active match's clock; fire scheduled or paced events
+  -> EventsService.recordAndBroadcast()
+       -> Postgres transaction: insert MatchEvent, update Match + MatchStat
+       -> write Redis hot-state hash `match:{id}:state`
+       -> PUBLISH the full payload on `match:{id}:events`
+  -> two independent consumers read that one publish:
+       - AppGateway relays it into the match:{id} Socket.io room as
+         match:event, plus match:score_update / match:stats_update /
+         match:status_change depending on event type
+       - StreamController's dedicated per-connection Redis subscriber
+         relays it into any open SSE stream for that match
+```
+
+Socket.io and SSE never talk to the simulator or to each other directly —
+Redis pub/sub is the only fan-out point, which is why REST, WebSocket, and
+SSE stay in sync (see Architecture Notes above).
+
+**SSE connect / reconnect** — `GET /api/matches/:id/events/stream`
+
+```text
+client connects, optionally with a Last-Event-ID header
+  -> validate matchId is a UUID, 404 if the match doesn't exist
+  -> Last-Event-ID present? look up that event's createdAt, replay every
+     MatchEvent for this match created after it, oldest first, as backlog
+  -> open a dedicated Redis connection, subscribe to `match:{id}:events`,
+     forward each publish as an SSE frame
+  -> emit a heartbeat frame every 15s so proxies don't close the connection
+  -> on req 'close': clear the heartbeat, unsubscribe, quit the Redis
+     connection
+```
+
 ## Assessment Coverage
 
 - REST match list/detail with validation, 404s, CORS, and consistent response
   envelopes.
 - Real-time match subscriptions with room-based delivery.
+- Heartbeat/ping-pong for connection health: Socket.io's built-in
+  `pingInterval`/`pingTimeout` plus an app-level `ping`/`pong` event pair
+  clients can use for their own liveness checks.
 - Chat rooms with join/leave, active user tracking, duplicate-tab handling,
   typing indicators, validation, and per-user rate limiting.
 - SSE match event stream with reconnect replay using `Last-Event-ID`.
@@ -204,6 +309,45 @@ of truth for live subscriptions.
   and realistic event distribution.
 - Graceful WebSocket error handling through an error envelope instead of dropped
   connections.
+
+## Testing Approach
+
+I didn't add automated tests for this submission, and I'd rather say that
+directly than have it look like an oversight.
+
+Given the time box, I prioritized covering all five Core Features correctly
+over building a test suite around them. A partial suite that only exercised
+REST endpoints would have given false confidence while leaving the actually
+risky surface — the WebSocket/SSE/simulator interaction — unchecked, so I
+spent the available time on manually verifying the full flow instead: Swagger
+for REST, a Socket.io client for the gateway events (subscribe, chat
+join/leave/message/typing, duplicate-tab joins), and a browser `EventSource`
+against `/events/stream`, including sending `Last-Event-ID` to check replay.
+
+Two design choices also limit how much untested code could be hiding bugs:
+
+- Every WebSocket payload goes through the same `validatePayload` /
+  class-validator path as the REST DTOs, so malformed input is rejected
+  before it reaches business logic rather than relying on tests to catch it
+  downstream.
+- `EventsService.recordAndBroadcast()` is the single writer for match state
+  (see Architecture Notes), so REST, WebSocket, and SSE all read from one
+  source instead of three separately-maintained paths that could drift apart
+  silently.
+
+If I were taking this further, the first tests I'd add are:
+
+- Unit tests for `distributions.ts` and `schedule-generator.ts` — they're
+  pure functions, and the realistic-event-distribution requirement (~2.5
+  goals/match, etc.) is exactly the kind of thing worth pinning down
+  numerically.
+- A Jest e2e test that subscribes a WS client to a match, waits for the
+  simulator to fire a scheduled event, and asserts the client actually
+  receives it — that's the integration point most likely to regress
+  silently on a refactor.
+- A rate-limit test for chat, since the fixed-window counter (see Known
+  Limitations) has an edge-case at window boundaries I'd want pinned down
+  before trusting it under load.
 
 ## Known Limitations
 

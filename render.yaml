@@ -2,7 +2,7 @@ services:
   - type: web
     name: profootball-match-api
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run start:prod
     healthCheckPath: /health
