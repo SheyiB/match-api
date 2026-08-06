@@ -1,7 +1,10 @@
 # ProFootball Real-Time Match API
 
-**Live API:** https://match-api-0oaf.onrender.com — interactive Swagger docs
-at [`/api/docs`](https://match-api-0oaf.onrender.com/api/docs), WebSocket &
+**Live API:** 
+- https://match-api-0oaf.onrender.com — interactive Swagger docs
+at [`/api/docs`](https://match-api-0oaf.onrender.com/api/docs)
+
+- WebSocket &
 SSE event reference at
 [`/api/events-docs`](https://match-api-0oaf.onrender.com/api/events-docs).
 
