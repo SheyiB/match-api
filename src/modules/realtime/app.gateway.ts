@@ -13,6 +13,7 @@ import { IsUUID, validateSync } from 'class-validator';
 import { Server, Socket } from 'socket.io';
 import { ErrorCode } from '../../common/constants/error-codes';
 import { redisKeys, roomNames } from '../../common/constants/redis-keys';
+import { resolveCorsOrigin } from '../../common/cors';
 import { wsEvents } from '../../common/constants/ws-events';
 import { WsExceptionFilter } from '../../common/filters/ws-exception.filter';
 import { BroadcastPayload } from '../events/events.service';
@@ -27,7 +28,7 @@ type SocketChatMembership = { userId: string; username: string };
 @UseFilters(WsExceptionFilter)
 @WebSocketGateway({
   cors: {
-    origin: process.env.CORS_ORIGIN?.split(',') ?? '*',
+    origin: resolveCorsOrigin(),
     credentials: true,
   },
   pingInterval: 25000,
