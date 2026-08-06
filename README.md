@@ -28,39 +28,66 @@ and acknowledgements with less custom infrastructure than raw WebSockets.
 
 ## Setup
 
+### Local
+
 ```bash
 npm install
-cp .env.example .env
+cp .env.example .env          # then fill in DATABASE_URL and REDIS_URL
 npx prisma generate
 npx prisma db push
 npm run prisma:seed
 npm run start:dev
 ```
 
+### Docker
+
+```bash
+cp .env.example .env          # fill in DATABASE_URL and REDIS_URL
+docker build -t profootball-api .
+docker run --env-file .env -p 3000:3000 profootball-api
+```
+
+> Postgres and Redis must be reachable from the container. Point
+> `DATABASE_URL` and `REDIS_URL` at external services (e.g. Supabase +
+> Upstash) or add them to a `docker-compose.yml`.
+
+Before the first run (local or Docker), push the schema and seed data:
+
+```bash
+npx prisma db push
+npm run prisma:seed
+```
 
 ## Deployment
 
-This repository includes a `render.yaml` blueprint for Render.
+### Render
 
-Recommended production services:
-
-- Render Web Service for the API
-- Supabase Postgres for `DATABASE_URL`
-- Upstash Redis or Render Redis for `REDIS_URL`
+This repository includes a `render.yaml` blueprint for one-click deploy.
 
 Render settings if configuring manually:
 
 ```text
-Build Command: npm install && npm run build
+Build Command: npm install --include=dev && npm run build
 Start Command: npm run start:prod
 Health Check Path: /health
 ```
 
-Required environment variables:
+`--include=dev` is required because `typescript` and `@nestjs/cli` are
+devDependencies needed at build time, and Render's production environment
+skips them by default.
+
+### Docker (any host)
+
+```bash
+docker build -t profootball-api .
+docker run -d --env-file .env -p 3000:3000 profootball-api
+```
+
+### Environment variables
 
 ```text
-DATABASE_URL=
-REDIS_URL=
+DATABASE_URL=            # Postgres connection string (required)
+REDIS_URL=               # Redis connection string (required)
 CORS_ORIGIN=*
 TICK_INTERVAL_MS=1000
 MATCH_MINUTE_RATIO=1
@@ -80,8 +107,8 @@ npm run prisma:seed
 Render free instances can spin down when idle, which can affect automated
 testing and live connections — the live URL above is currently running on
 Render's **free** tier, so the first request after a period of inactivity can
-take up to a minute to respond. `render.yaml` sets `plan: starter` for anyone
-who wants to deploy their own always-on instance instead.
+take up to a minute to respond. `render.yaml` sets `plan: free`; change to
+`starter` for an always-on instance.
 
 ## REST
 
@@ -203,101 +230,9 @@ of truth for live subscriptions.
 
 ## Action Flows
 
-The event list above shows what gets emitted; this shows what actually
-happens end-to-end for each action. Every WebSocket action follows the same
-shape: validate the payload, apply the change, then (sometimes) broadcast.
+End-to-end walkthroughs for every WebSocket action, chat lifecycle, simulator
+event pipeline, and SSE reconnect flow: **[docs/ACTION_FLOWS.md](docs/ACTION_FLOWS.md)**.
 
-**Subscribe to a match** — `match:subscribe`
-
-```text
-client emits match:subscribe {matchId}
-  -> validate payload is a UUID
-  -> MatchesService.exists(matchId), else WsException MATCH_NOT_FOUND
-  -> client.join(`match:{id}`)
-  -> first subscriber for this match? subscribe the gateway's Redis client to
-     `match:{id}:events` (ref-counted, so N clients on one match share a
-     single Redis subscription)
-  -> ack { ok: true }
-```
-
-`match:unsubscribe` mirrors this: `client.leave`, then unsubscribe the Redis
-channel once the ref count reaches zero.
-
-**Join a chat room** — `chat:join`
-
-```text
-client emits chat:join {matchId, userId, username}
-  -> ChatService.join: HINCRBY chat:{id}:presence[userId]  (per-tab counter)
-  -> client.join(`chat:{id}`)
-  -> counter went 0 -> 1 (first open tab for this user)?
-       broadcast chat:user_joined with the new userCount
-     counter already > 0 (another tab)?
-       join silently, no broadcast
-  -> ack { ok: true }
-```
-
-That per-user counter is the duplicate-tab handling the brief asks for: a
-second tab from the same user increments the count without re-announcing
-them. `chat:leave` mirrors this in reverse, only broadcasting
-`chat:user_left` once the counter hits zero (their last tab closed).
-
-**Send a chat message** — `chat:message`
-
-```text
-client emits chat:message {matchId, text}
-  -> gateway requires an active chat:join for this matchId first,
-     else WsException NOT_SUBSCRIBED
-  -> ChatService.message: trim, reject empty/over-length
-  -> INCR chat:{id}:ratelimit:{userId}  (fixed window, EXPIRE set on first hit)
-  -> over CHAT_RATE_LIMIT_MAX? WsException RATE_LIMITED
-  -> persist ChatMessage row in Postgres
-  -> broadcast chat:message to the chat:{id} room
-```
-
-**Typing indicators** — `chat:typing:start` / `chat:typing:stop`
-
-```text
-start -> SET chat:{id}:typing:{userId} EX 4  -> relay { isTyping: true }
-stop  -> DEL chat:{id}:typing:{userId}       -> relay { isTyping: false }
-```
-
-If a client disconnects mid-type without sending `stop`, the 4-second Redis
-TTL is what clears the indicator client-side (see Known Limitations).
-
-**Match events — driven by the simulator, not a client**
-
-```text
-SimulatorService.tick() (every TICK_INTERVAL_MS)
-  -> advance each active match's clock; fire scheduled or paced events
-  -> EventsService.recordAndBroadcast()
-       -> Postgres transaction: insert MatchEvent, update Match + MatchStat
-       -> write Redis hot-state hash `match:{id}:state`
-       -> PUBLISH the full payload on `match:{id}:events`
-  -> two independent consumers read that one publish:
-       - AppGateway relays it into the match:{id} Socket.io room as
-         match:event, plus match:score_update / match:stats_update /
-         match:status_change depending on event type
-       - StreamController's dedicated per-connection Redis subscriber
-         relays it into any open SSE stream for that match
-```
-
-Socket.io and SSE never talk to the simulator or to each other directly —
-Redis pub/sub is the only fan-out point, which is why REST, WebSocket, and
-SSE stay in sync (see Architecture Notes above).
-
-**SSE connect / reconnect** — `GET /api/matches/:id/events/stream`
-
-```text
-client connects, optionally with a Last-Event-ID header
-  -> validate matchId is a UUID, 404 if the match doesn't exist
-  -> Last-Event-ID present? look up that event's createdAt, replay every
-     MatchEvent for this match created after it, oldest first, as backlog
-  -> open a dedicated Redis connection, subscribe to `match:{id}:events`,
-     forward each publish as an SSE frame
-  -> emit a heartbeat frame every 15s so proxies don't close the connection
-  -> on req 'close': clear the heartbeat, unsubscribe, quit the Redis
-     connection
-```
 
 ## Assessment Coverage
 
