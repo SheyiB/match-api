@@ -2,13 +2,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { Reflector } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { resolveCorsOrigin } from './common/cors';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   app.enableCors({
     origin: resolveCorsOrigin(),
@@ -31,6 +32,9 @@ async function bootstrap() {
     .setVersion('0.1.0')
     .build();
   SwaggerModule.setup('/api/docs', app, SwaggerModule.createDocument(app, config));
+
+  // Redirect the root URL to Swagger docs so visitors land somewhere useful.
+  app.getHttpAdapter().get('/', (_req, res) => res.redirect('/api/docs'));
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
