@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  NOT_STARTED
+  FIRST_HALF
+  HALF_TIME
+  SECOND_HALF
+  FULL_TIME
+}
+
+enum EventType {
+  GOAL
+  YELLOW_CARD
+  RED_CARD
+  SUBSTITUTION
+  FOUL
+  SHOT
+  KICKOFF
+  HALF_TIME_WHISTLE
+  SECOND_HALF_KICKOFF
+  FULL_TIME_WHISTLE
+}
+
+model Team {
+  id          String  @id @default(uuid())
+  name        String
+  shortCode   String  @map("short_code")
+  crestUrl    String? @map("crest_url")
+  homeMatches Match[] @relation("HomeTeam")
+  awayMatches Match[] @relation("AwayTeam")
+
+  @@map("teams")
+}
+
+model Match {
+  id           String        @id @default(uuid())
+  homeTeamId   String        @map("home_team_id")
+  awayTeamId   String        @map("away_team_id")
+  homeTeam     Team          @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam     Team          @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  status       MatchStatus   @default(NOT_STARTED)
+  minute       Int           @default(0)
+  homeScore    Int           @default(0) @map("home_score")
+  awayScore    Int           @default(0) @map("away_score")
+  kickoffAt    DateTime      @map("kickoff_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  events       MatchEvent[]
+  stats        MatchStat?
+  chatMessages ChatMessage[]
+
+  @@map("matches")
+}
+
+model MatchEvent {
+  id         String    @id @default(uuid())
+  matchId    String    @map("match_id")
+  match      Match     @relation(fields: [matchId], references: [id])
+  type       EventType
+  minute     Int
+  teamId     String?   @map("team_id")
+  playerName String?   @map("player_name")
+  detail     Json?
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([matchId])
+  @@map("match_events")
+}
+
+model MatchStat {
+  matchId           String   @id @map("match_id")
+  match             Match    @relation(fields: [matchId], references: [id])
+  possessionHome    Int      @default(50) @map("possession_home")
+  possessionAway    Int      @default(50) @map("possession_away")
+  shotsHome         Int      @default(0) @map("shots_home")
+  shotsAway         Int      @default(0) @map("shots_away")
+  shotsOnTargetHome Int      @default(0) @map("shots_on_target_home")
+  shotsOnTargetAway Int      @default(0) @map("shots_on_target_away")
+  cornersHome       Int      @default(0) @map("corners_home")
+  cornersAway       Int      @default(0) @map("corners_away")
+  foulsHome         Int      @default(0) @map("fouls_home")
+  foulsAway         Int      @default(0) @map("fouls_away")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("match_stats")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  matchId   String   @map("match_id")
+  match     Match    @relation(fields: [matchId], references: [id])
+  userId    String   @map("user_id")
+  username  String
+  text      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([matchId, createdAt])
+  @@map("chat_messages")
+}
