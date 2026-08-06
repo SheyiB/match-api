@@ -1,7 +1,9 @@
 # ProFootball Real-Time Match API
 
 **Live API:** https://match-api-0oaf.onrender.com — interactive Swagger docs
-at [`/api/docs`](https://match-api-0oaf.onrender.com/api/docs).
+at [`/api/docs`](https://match-api-0oaf.onrender.com/api/docs), WebSocket &
+SSE event reference at
+[`/api/events-docs`](https://match-api-0oaf.onrender.com/api/events-docs).
 
 Backend implementation for the ProFootball take-home assessment: REST match
 data, Socket.io room-based live updates, SSE match event streams,
@@ -15,7 +17,8 @@ rate limiting, and a background match simulator.
 - SSE via Nest `@Sse()`
 - Prisma with Postgres
 - Redis via `ioredis`
-- Swagger at `/api/docs`
+- Swagger (REST) at `/api/docs`
+- AsyncAPI (WebSocket & SSE events) at `/api/events-docs`
 
 The brief allows Node.js or Bun and leaves the real-time approach open. I chose
 NestJS because validation pipes, exception filters, modules, and gateways map
@@ -86,7 +89,9 @@ who wants to deploy their own always-on instance instead.
 - `GET /api/matches`
 - `GET /api/matches/:id`
 - `GET /api/matches/:id/chat/presence`
-- `GET /api/docs`
+- `GET /api/docs` — interactive REST documentation (Swagger)
+- `GET /api/events-docs` — interactive WebSocket & SSE event reference (AsyncAPI)
+- `GET /api/events-docs/spec` — raw AsyncAPI JSON spec
 
 REST responses use the global envelope:
 

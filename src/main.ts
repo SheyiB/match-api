@@ -33,8 +33,21 @@ async function bootstrap() {
     .build();
   SwaggerModule.setup('/api/docs', app, SwaggerModule.createDocument(app, config));
 
-  // Redirect the root URL to Swagger docs so visitors land somewhere useful.
-  app.getHttpAdapter().get('/', (_req, res: any) => res.redirect('/api/docs'));
+  // Friendly welcome on the root URL.
+  app.getHttpAdapter().get('/', (_req, res: any) =>
+    res.json({
+      name: 'ProFootball Real-Time Match API',
+      version: '0.1.0',
+      docs: {
+        rest: '/api/docs',
+        events: '/api/events-docs',
+      },
+      health: '/health',
+      message:
+        'Welcome! Visit /api/docs for interactive REST documentation ' +
+        'or /api/events-docs for the WebSocket & SSE event reference.',
+    }),
+  );
 
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);

@@ -1,5 +1,6 @@
 import { Controller, Get, Module } from '@nestjs/common';
 import { ChatModule } from './modules/chat/chat.module';
+import { DocsModule } from './modules/docs/docs.module';
 import { EventsModule } from './modules/events/events.module';
 import { MatchesModule } from './modules/matches/matches.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -22,7 +23,9 @@ class HealthController {
     RealtimeModule,
     ChatModule,
     StreamModule,
+    DocsModule,
   ],
   controllers: [HealthController],
 })
 export class AppModule {}
+
