@@ -310,44 +310,6 @@ client connects, optionally with a Last-Event-ID header
 - Graceful WebSocket error handling through an error envelope instead of dropped
   connections.
 
-## Testing Approach
-
-I didn't add automated tests for this submission, and I'd rather say that
-directly than have it look like an oversight.
-
-Given the time box, I prioritized covering all five Core Features correctly
-over building a test suite around them. A partial suite that only exercised
-REST endpoints would have given false confidence while leaving the actually
-risky surface — the WebSocket/SSE/simulator interaction — unchecked, so I
-spent the available time on manually verifying the full flow instead: Swagger
-for REST, a Socket.io client for the gateway events (subscribe, chat
-join/leave/message/typing, duplicate-tab joins), and a browser `EventSource`
-against `/events/stream`, including sending `Last-Event-ID` to check replay.
-
-Two design choices also limit how much untested code could be hiding bugs:
-
-- Every WebSocket payload goes through the same `validatePayload` /
-  class-validator path as the REST DTOs, so malformed input is rejected
-  before it reaches business logic rather than relying on tests to catch it
-  downstream.
-- `EventsService.recordAndBroadcast()` is the single writer for match state
-  (see Architecture Notes), so REST, WebSocket, and SSE all read from one
-  source instead of three separately-maintained paths that could drift apart
-  silently.
-
-If I were taking this further, the first tests I'd add are:
-
-- Unit tests for `distributions.ts` and `schedule-generator.ts` — they're
-  pure functions, and the realistic-event-distribution requirement (~2.5
-  goals/match, etc.) is exactly the kind of thing worth pinning down
-  numerically.
-- A Jest e2e test that subscribes a WS client to a match, waits for the
-  simulator to fire a scheduled event, and asserts the client actually
-  receives it — that's the integration point most likely to regress
-  silently on a refactor.
-- A rate-limit test for chat, since the fixed-window counter (see Known
-  Limitations) has an edge-case at window boundaries I'd want pinned down
-  before trusting it under load.
 
 ## Known Limitations
 
@@ -363,3 +325,4 @@ If I were taking this further, the first tests I'd add are:
   the client side instead of Redis keyspace notifications.
 - Chat rate limiting uses a fixed counter window.
 - No load testing has been performed.
+- No test coverage
